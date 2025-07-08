@@ -167,11 +167,21 @@ def main() -> None:
             fig.write_html("plot.html")
             plot_path = "plot.html"
 
+        # Generar respuesta en lenguaje natural
+        summary = vn.generate_summary(question=query, df=df)
+        # Opcional: preguntas de seguimiento si se pasa --questions
+        do_questions = "--questions" in sys.argv
+        questions = []
+        if do_questions:
+            questions = vn.generate_followup_questions(question=query, sql=sql, df=df)
         result = {
             "sql": f"```sql\n{sql}\n```",
             "dataframe": text,
+            "summary": summary,
             "plot_path": plot_path,
         }
+        if do_questions:
+            result["questions"] = questions
         sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
 
     except Exception as e:
