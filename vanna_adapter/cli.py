@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 import re
 from sqlalchemy import create_engine
+from sqlalchemy.engine.url import make_url
 
 # --- IMPORTACIONES CORRECTAS Y VERIFICADAS PARA v0.7.9 ---
 from vanna.openai.openai_chat import OpenAI_Chat
@@ -32,9 +33,10 @@ class Vanna(ChromaDB_VectorStore, OpenAI_Chat):
         return "\n\n".join(stmts)
 
     def train(self, ddl: str = None, **kwargs) -> bool:
-        """Almacena las declaraciones DDL en el vector store (entrenamiento RAG)."""
+        """Almacena las declaraciones DDL en el vector store (entrenamiento RAG) y espera a la indexación."""
         if ddl:
             statements = ddl.split("\n\n") if isinstance(ddl, str) else ddl
+            expected = len(statements)
             for stmt in statements:
                 stmt = stmt.strip()
                 if stmt:
@@ -111,21 +113,8 @@ def _quote_table_names(sql: str, engine) -> str:
 
 
 def _process_query(vn: Vanna, engine, query: str) -> None:
-    """Orquesta la consulta y la generación de la salida."""
-    sql = vn.generate_sql(question=query)
-    exec_sql = _quote_table_names(sql, engine)
-    # Cast date column (TEXT) to timestamp for comparison
-    exec_sql = re.sub(r'\bdate\s*(>=|<)', lambda m: f"CAST(date AS timestamp) {m.group(1)}", exec_sql)
-    df = pd.read_sql(exec_sql, engine)
-    text = df.head(1000).to_string(index=False)
-    plot_path = _generate_chart(vn, df, sql, query)
-    
-    result = {
-        "sql": f"```sql\n{sql}\n```",
-        "dataframe": text,
-        "plot_path": plot_path,
-    }
-    sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
+    """Stub: _process_query está reemplazado por vn.ask() en main"""
+    pass
 
 
 def main() -> None:
@@ -133,6 +122,15 @@ def main() -> None:
     try:
         env = _load_env()
         vn = _build_vanna(env["api_key"], env["model"])
+        # Conectar Vanna a Postgres para introspección de datos
+        url = make_url(env["db_url"])
+        vn.connect_to_postgres(
+            host=url.host,
+            dbname=url.database,
+            user=url.username,
+            password=url.password,
+            port=url.port
+        )
         engine = create_engine(env["db_url"])
         
         query = env["query"].strip()
@@ -149,7 +147,32 @@ def main() -> None:
             except Exception as e:
                 _error_exit(f"Error training model: {e}")
 
-        _process_query(vn, engine, query)
+
+
+        # Ejecutar flujo RAG oficial de Vanna
+        try:
+            sql, df, fig = vn.ask(
+                question=query,
+                print_results=False,
+                auto_train=False,
+                visualize=False,
+                allow_llm_to_see_data=True
+            )
+        except Exception as e:
+            _error_exit(str(e))
+
+        text = df.head(1000).to_string(index=False) if df is not None else ""
+        plot_path = None
+        if fig is not None:
+            fig.write_html("plot.html")
+            plot_path = "plot.html"
+
+        result = {
+            "sql": f"```sql\n{sql}\n```",
+            "dataframe": text,
+            "plot_path": plot_path,
+        }
+        sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
 
     except Exception as e:
         _error_exit(f"An unexpected error occurred: {e}")
