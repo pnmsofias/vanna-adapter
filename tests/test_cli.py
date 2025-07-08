@@ -95,12 +95,13 @@ def test_missing_env(mock_engine, mock_openai, mock_chroma, mock_vanna, capsys):
     err = capsys.readouterr().err
     assert 'error' in err
 
-def _setup_env(tmp_path):
+def _setup_env(tmp_path, query='question'):
     os.environ['LLM_API_KEY'] = 'k'
     os.environ['DB_URL'] = 'db'
-    os.environ['VANNA_QUERY'] = 'question'
+    os.environ['VANNA_QUERY'] = query
     os.environ.pop('LLM_MODEL', None)
     os.chdir(tmp_path)
+    sys.argv = ['prog', '--query', query]
 
 
 @mock.patch('vanna_adapter.cli.Vanna')
@@ -110,12 +111,19 @@ def _setup_env(tmp_path):
 def test_training_and_query(mock_engine, mock_openai, mock_chroma, mock_vanna, tmp_path, capsys):
     _setup_env(tmp_path)
     instance = mock_vanna.return_value
-    instance.ask.return_value = ('SQL', mock.MagicMock(head=lambda x: mock.MagicMock(to_string=lambda index=False: 'df')), None)
+
+    class _Fig:
+        def write_html(self, path):
+            Path(path).write_text('html')
+
+    df_mock = mock.MagicMock(head=lambda x: mock.MagicMock(to_string=lambda index=False: 'df'))
+    instance.ask.return_value = ('SQL', df_mock, _Fig())
     instance.generate_summary.return_value = 'sum'
     main()
     out = capsys.readouterr().out
     assert 'SQL' in out
     assert Path('.trained').exists()
+    assert Path('plot.html').exists()
 
 
 @mock.patch('vanna_adapter.cli.Vanna')
@@ -123,8 +131,7 @@ def test_training_and_query(mock_engine, mock_openai, mock_chroma, mock_vanna, t
 @mock.patch('vanna_adapter.cli.OpenAI')
 @mock.patch('vanna_adapter.cli.create_engine')
 def test_update_command(mock_engine, mock_openai, mock_chroma, mock_vanna, tmp_path, capsys):
-    _setup_env(tmp_path)
-    os.environ['VANNA_QUERY'] = '/update'
+    _setup_env(tmp_path, query='/update')
     instance = mock_vanna.return_value
     instance.ask.return_value = ('SQL', None, None)
     instance.generate_summary.return_value = 'sum'

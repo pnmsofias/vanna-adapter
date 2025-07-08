@@ -53,7 +53,6 @@ class Vanna(ChromaDB_VectorStore, OpenAI_Chat):
     
 # --------------------------------------------------------
 
-TRAIN_FLAG = Path('.trained')
 DEFAULT_MODEL = "gpt-4o-mini"
 
 
@@ -95,20 +94,21 @@ def _build_vanna(api_key: str, model: str) -> Vanna:
     return Vanna(client=client, config=config)
 
 
-def _train(vn: Vanna, engine) -> None:
+def _train(vn: Vanna, engine, train_flag: Path) -> None:
     """Obtiene DDL y entrena a Vanna."""
     ddl = vn.get_ddl(engine=engine)
     vn.train(ddl=ddl)
-    TRAIN_FLAG.touch()
+    train_flag.touch()
 
 
-def _generate_chart(vn: Vanna, df: pd.DataFrame, sql: str, question: str) -> str | None:
+def _generate_chart(vn: Vanna, df: pd.DataFrame, sql: str, question: str, work_dir: Path) -> str | None:
     """Genera un gráfico (best-effort)."""
     try:
         plotly_code = vn.generate_plotly_code(question=question, sql=sql, df=df)
         fig = vn.get_plotly_figure(plotly_code=plotly_code, df=df)
-        fig.write_html("plot.html")
-        return "plot.html"
+        output = work_dir / "plot.html"
+        fig.write_html(output)
+        return str(output)
     except Exception:
         return None
 
@@ -140,6 +140,9 @@ def main() -> None:
         parser.add_argument("--global-questions", action="store_true", help="Generate global questions")
         args = parser.parse_args()
 
+        work_dir = Path.cwd()
+        train_flag = work_dir / ".trained"
+
         env = _load_env()
         vn = _build_vanna(env["api_key"], env["model"])
         # Conectar Vanna a Postgres para introspección de datos
@@ -156,11 +159,11 @@ def main() -> None:
         query = args.query.strip()
 
         if query.lower() == "/update":
-            TRAIN_FLAG.unlink(missing_ok=True)
-        
-        if not TRAIN_FLAG.exists():
+            train_flag.unlink(missing_ok=True)
+
+        if not train_flag.exists():
             try:
-                _train(vn, engine)
+                _train(vn, engine, train_flag)
                 if query.lower() == "/update":
                     sys.stdout.write(json.dumps({"message": "Model updated"}, separators=(",", ":")) + "\n")
                     return
@@ -185,8 +188,9 @@ def main() -> None:
         text = df.head(1000).to_string(index=False) if df is not None else ""
         plot_path = None
         if fig is not None:
-            fig.write_html("plot.html")
-            plot_path = "plot.html"
+            output = work_dir / "plot.html"
+            fig.write_html(output)
+            plot_path = str(output)
 
         # Generar respuesta en lenguaje natural
         summary = vn.generate_summary(question=query, df=df)
