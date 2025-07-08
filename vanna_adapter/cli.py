@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 import re
+import openai
+from openai import OpenAI
 from sqlalchemy import create_engine
 from sqlalchemy.engine.url import make_url
 
@@ -19,9 +21,9 @@ class Vanna(ChromaDB_VectorStore, OpenAI_Chat):
     def log(self, message: str, title: str = "Info") -> None:
         # Redirigir logs a stderr
         print(f"{title}: {message}", file=sys.stderr)
-    def __init__(self, config=None):
+    def __init__(self, client=None, config=None):
         ChromaDB_VectorStore.__init__(self, config=config)
-        OpenAI_Chat.__init__(self, config=config)
+        OpenAI_Chat.__init__(self, client=client, config=config)
 
     def get_ddl(self, engine):
         """Extrae DDL de todas las tablas usando SQLAlchemy."""
@@ -77,13 +79,20 @@ def _load_env() -> dict:
 
 def _build_vanna(api_key: str, model: str) -> Vanna:
     """Configura e instancia Vanna componiendo sus partes."""
-    # Permitir cambiar la URL base del LLM mediante variable de entorno
-    base_url = os.getenv("LLM_BASE_URL")
+    # Instanciar cliente OpenAI con endpoint personalizado
+    client_kwargs = {"api_key": api_key}
+    base_url = os.getenv("OPENAI_API_BASE") or os.getenv("LLM_BASE_URL")
     if base_url:
-        os.environ["OPENAI_API_BASE"] = base_url
-
-    config = {'api_key': api_key, 'model': model}
-    return Vanna(config=config)
+        client_kwargs["base_url"] = base_url
+    api_type = os.getenv("OPENAI_API_TYPE")
+    if api_type:
+        client_kwargs["api_type"] = api_type
+    api_version = os.getenv("OPENAI_API_VERSION")
+    if api_version:
+        client_kwargs["api_version"] = api_version
+    client = OpenAI(**client_kwargs)
+    config = {"model": model}
+    return Vanna(client=client, config=config)
 
 
 def _train(vn: Vanna, engine) -> None:
