@@ -22,7 +22,6 @@ dependencies = [
     "google-cloud-bigquery",
     "mysql-connector-python",
     "chromadb",
-    "openai"
 ]
 
 [project.scripts]
