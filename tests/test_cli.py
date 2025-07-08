@@ -43,7 +43,7 @@ if "vanna" not in sys.modules:
         def generate_sql(self, q):
             return "SQL"
         def run_sql(self, sql, engine=None):
-            return mock.MagicMock(head=lambda x: mock.MagicMock(to_string=lambda index=False: "df"))
+            return mock.MagicMock(head=lambda x: mock.MagicMock(to_markdown=lambda index=False: "df"))
         def generate_chart(self, df=None, sql=None):
             return mock.MagicMock(write_html=lambda p: None)
 
@@ -116,7 +116,7 @@ def test_training_and_query(mock_engine, mock_openai, mock_chroma, mock_vanna, t
         def write_html(self, path):
             Path(path).write_text('html')
 
-    df_mock = mock.MagicMock(head=lambda x: mock.MagicMock(to_string=lambda index=False: 'df'))
+    df_mock = mock.MagicMock(head=lambda x: mock.MagicMock(to_markdown=lambda index=False: 'df'))
     instance.ask.return_value = ('SQL', df_mock, _Fig())
     instance.generate_summary.return_value = 'sum'
     main()

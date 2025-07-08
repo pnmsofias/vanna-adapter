@@ -211,7 +211,7 @@ def main() -> None:
         except Exception as e:
             _error_exit(str(e))
 
-        text = df.head(1000).to_string(index=False) if df is not None else ""
+        text = df.head(1000).to_markdown(index=False) if df is not None else ""
         plot_path = None
         if fig is not None:
             output = work_dir / "plot.html"
