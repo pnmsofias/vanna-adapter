@@ -6,10 +6,7 @@ from pathlib import Path
 import pandas as pd
 from sqlalchemy import create_engine
 
-from vanna.base import Vanna
-from vanna.openai import OpenAI
-from vanna.chromadb import Chroma
-
+from vanna.local import VannaLocal
 
 TRAIN_FLAG = Path('.trained')
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -34,18 +31,18 @@ def _load_env() -> dict:
     return env
 
 
-def _build_vanna(api_key: str, model: str) -> Vanna:
+def _build_vanna(api_key: str, model: str) -> VannaLocal:
     llm = OpenAI(config={"api_key": api_key, "model": model})
     vectorstore = Chroma()
-    return Vanna(llm=llm, vectorstore=vectorstore)
+    return VannaLocal(llm=llm, vectorstore=vectorstore)
 
 
-def _train(vn: Vanna) -> None:
+def _train(vn: VannaLocal) -> None:
     vn.train()
     TRAIN_FLAG.touch()
 
 
-def _generate_chart(vn: Vanna, df: pd.DataFrame, sql: str) -> str | None:
+def _generate_chart(vn: VannaLocal, df: pd.DataFrame, sql: str) -> str | None:
     try:
         fig = vn.generate_chart(df=df, sql=sql)
         fig.write_html("plot.html")
@@ -54,7 +51,7 @@ def _generate_chart(vn: Vanna, df: pd.DataFrame, sql: str) -> str | None:
         return None
 
 
-def _process_query(vn: Vanna, engine, query: str) -> None:
+def _process_query(vn: VannaLocal, engine, query: str) -> None:
     sql = vn.generate_sql(query)
     df = vn.run_sql(sql, engine=engine)
     text = df.head(1000).to_string(index=False)
