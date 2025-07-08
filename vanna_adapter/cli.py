@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 from sqlalchemy import create_engine
 
-from vanna import Vanna
+from vanna.base import Vanna
 from vanna.openai import OpenAI
 from vanna.chromadb import Chroma
 
