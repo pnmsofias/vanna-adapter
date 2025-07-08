@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 import argparse
+import io
+from contextlib import redirect_stdout
 
 import pandas as pd
 import openai
@@ -53,6 +55,46 @@ class Vanna(ChromaDB_VectorStore, OpenAI_Chat):
 # --------------------------------------------------------
 
 DEFAULT_MODEL = "gpt-4o-mini"
+
+
+class _silence_stdout:
+    """Context manager to suppress stdout from noisy libraries."""
+
+    def __enter__(self):
+        self._buf = io.StringIO()
+        self._redir = redirect_stdout(self._buf)
+        self._redir.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._redir.__exit__(exc_type, exc, tb)
+        # drop captured output
+
+
+def _format_markdown(result: dict) -> str:
+    """Return a markdown string built from the result dictionary."""
+    sections = []
+    sql = result.get("sql")
+    if sql:
+        # sql may already contain fenced block markers
+        if not sql.startswith("```"):
+            sql = f"```sql\n{sql}\n```"
+        sections.append(f"### SQL\n\n{sql}")
+    df_text = result.get("dataframe")
+    if df_text:
+        sections.append(f"### Dataframe\n{df_text}")
+    summary = result.get("summary")
+    if summary:
+        sections.append(f"### Summary\n{summary}")
+    questions = result.get("questions")
+    if questions:
+        q_text = "\n".join(questions)
+        sections.append(f"### Questions\n{q_text}")
+    message = result.get("message")
+    if message:
+        sections.append(f"### Message\n{message}")
+    return "\n\n".join(sections)
+
 
 
 def _error_exit(message: str) -> None:
@@ -145,9 +187,10 @@ def main() -> None:
 
         if not train_flag.exists():
             try:
-                _train(vn, engine, train_flag)
+                with _silence_stdout():
+                    _train(vn, engine, train_flag)
                 if query.lower() == "/update":
-                    sys.stdout.write(json.dumps({"message": "Model updated"}, separators=(",", ":")) + "\n")
+                    sys.stdout.write(_format_markdown({"message": "Model updated"}) + "\n")
                     return
             except Exception as e:
                 _error_exit(f"Error training model: {e}")
@@ -157,13 +200,14 @@ def main() -> None:
         # Ejecutar flujo RAG oficial de Vanna
         do_graph = args.graph
         try:
-            sql, df, fig = vn.ask(
-                question=query,
-                print_results=False,
-                auto_train=False,
-                visualize=do_graph,
-                allow_llm_to_see_data=True
-            )
+            with _silence_stdout():
+                sql, df, fig = vn.ask(
+                    question=query,
+                    print_results=False,
+                    auto_train=False,
+                    visualize=do_graph,
+                    allow_llm_to_see_data=True
+                )
         except Exception as e:
             _error_exit(str(e))
 
@@ -175,19 +219,22 @@ def main() -> None:
             plot_path = str(output)
 
         # Generar respuesta en lenguaje natural
-        summary = vn.generate_summary(question=query, df=df)
+        with _silence_stdout():
+            summary = vn.generate_summary(question=query, df=df)
         # Opcional: preguntas de seguimiento si se pasa --questions
         do_questions = args.questions
         questions = []
         if do_questions:
-            questions = vn.generate_followup_questions(question=query, sql=sql, df=df)
+            with _silence_stdout():
+                questions = vn.generate_followup_questions(question=query, sql=sql, df=df)
         # Opcional: preguntas globales si se pasa --global-questions
         do_global_questions = args.global_questions
         global_questions = []
         if do_global_questions:
-            global_questions = vn.generate_questions()
+            with _silence_stdout():
+                global_questions = vn.generate_questions()
         result = {
-            "sql": f"```sql\n{sql}\n```",
+            "sql": sql,
             "dataframe": text,
             "summary": summary,
             "plot_path": plot_path,
@@ -196,7 +243,7 @@ def main() -> None:
             result["questions"] = questions
         if do_global_questions:
             result["global_questions"] = global_questions
-        sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
+        sys.stdout.write(_format_markdown(result) + "\n")
 
     except Exception as e:
         _error_exit(f"An unexpected error occurred: {e}")
