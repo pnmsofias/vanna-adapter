@@ -1,14 +1,10 @@
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "vanna-adapter"
 version = "0.1.0"
 description = "CLI adapter for vanna.ai"
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{name = "Pedro Navajas", email="pnm@sofias.ai"}]
+authors = [{name = "Auto", email="auto@example.com"}]
 license = {text="MIT"}
 
 dependencies = [
@@ -21,15 +17,8 @@ dependencies = [
     "snowflake-connector-python",
     "google-cloud-bigquery",
     "mysql-connector-python",
-    "chromadb",
-    "openai"
+    "chromadb"
 ]
 
 [project.scripts]
 vanna-adapter = "vanna_adapter.cli:main"
-
-[tool.pytest.ini_options]
-addopts = "-vv"
-
-[tool.ruff]
-line-length = 100
