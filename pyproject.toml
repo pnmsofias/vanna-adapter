@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "CLI adapter for vanna.ai"
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{name = "Auto", email="auto@example.com"}]
+authors = [{name = "Pedro Navajas", email="pnm@sofias.ai"}]
 license = {text="MIT"}
 
 dependencies = [
