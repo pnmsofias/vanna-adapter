@@ -3,6 +3,7 @@ import json
 import os
 import sys
 from pathlib import Path
+import argparse
 
 import pandas as pd
 import re
@@ -68,10 +69,9 @@ def _load_env() -> dict:
     env = {
         "api_key": os.getenv("LLM_API_KEY"),
         "db_url": os.getenv("DB_URL"),
-        "query": os.getenv("VANNA_QUERY"),
         "model": os.getenv("LLM_MODEL", DEFAULT_MODEL),
     }
-    missing = [k for k, v in env.items() if k in {"api_key", "db_url", "query"} and not v]
+    missing = [k for k, v in env.items() if k in {"api_key", "db_url"} and not v]
     if missing:
         _error_exit(f"Missing environment variables: {', '.join(missing)}")
     return env
@@ -133,6 +133,13 @@ def _process_query(vn: Vanna, engine, query: str) -> None:
 def main() -> None:
     """Punto de entrada principal del CLI."""
     try:
+        parser = argparse.ArgumentParser(description="CLI para Vanna Adapter")
+        parser.add_argument("--query", required=True, help="Query message to process")
+        parser.add_argument("--graph", action="store_true", help="Visualize graph")
+        parser.add_argument("--questions", action="store_true", help="Generate followup questions")
+        parser.add_argument("--global-questions", action="store_true", help="Generate global questions")
+        args = parser.parse_args()
+
         env = _load_env()
         vn = _build_vanna(env["api_key"], env["model"])
         # Conectar Vanna a Postgres para introspección de datos
@@ -146,7 +153,7 @@ def main() -> None:
         )
         engine = create_engine(env["db_url"])
         
-        query = env["query"].strip()
+        query = args.query.strip()
 
         if query.lower() == "/update":
             TRAIN_FLAG.unlink(missing_ok=True)
@@ -163,7 +170,7 @@ def main() -> None:
 
 
         # Ejecutar flujo RAG oficial de Vanna
-        do_graph = "--graph" in sys.argv
+        do_graph = args.graph
         try:
             sql, df, fig = vn.ask(
                 question=query,
@@ -184,12 +191,12 @@ def main() -> None:
         # Generar respuesta en lenguaje natural
         summary = vn.generate_summary(question=query, df=df)
         # Opcional: preguntas de seguimiento si se pasa --questions
-        do_questions = "--questions" in sys.argv
+        do_questions = args.questions
         questions = []
         if do_questions:
             questions = vn.generate_followup_questions(question=query, sql=sql, df=df)
         # Opcional: preguntas globales si se pasa --global-questions
-        do_global_questions = "--global-questions" in sys.argv
+        do_global_questions = args.global_questions
         global_questions = []
         if do_global_questions:
             global_questions = vn.generate_questions()
