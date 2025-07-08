@@ -6,7 +6,6 @@ from pathlib import Path
 import argparse
 
 import pandas as pd
-import re
 import openai
 from openai import OpenAI
 from sqlalchemy import create_engine
@@ -111,23 +110,6 @@ def _generate_chart(vn: Vanna, df: pd.DataFrame, sql: str, question: str, work_d
         return str(output)
     except Exception:
         return None
-
-
-def _quote_table_names(sql: str, engine) -> str:
-    """Quote CamelCase table names using SQLAlchemy metadata reflection."""
-    from sqlalchemy import MetaData
-    metadata = MetaData()
-    metadata.reflect(bind=engine)
-    for name in metadata.tables:
-        # Replace unquoted table names with quoted ones
-        pattern = rf'(?<!")\b{name}\b(?!")'
-        sql = re.sub(pattern, f'"{name}"', sql)
-    return sql
-
-
-def _process_query(vn: Vanna, engine, query: str) -> None:
-    """Stub: _process_query está reemplazado por vn.ask() en main"""
-    pass
 
 
 def main() -> None:
