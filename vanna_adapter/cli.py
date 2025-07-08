@@ -15,6 +15,10 @@ from vanna.chromadb.chromadb_vector import ChromaDB_VectorStore
 
 class Vanna(ChromaDB_VectorStore, OpenAI_Chat):
     """Clase combinada de Vanna para RAG local con OpenAI y ChromaDB."""
+
+    def log(self, message: str, title: str = "Info") -> None:
+        # Redirigir logs a stderr
+        print(f"{title}: {message}", file=sys.stderr)
     def __init__(self, config=None):
         ChromaDB_VectorStore.__init__(self, config=config)
         OpenAI_Chat.__init__(self, config=config)
@@ -150,12 +154,13 @@ def main() -> None:
 
 
         # Ejecutar flujo RAG oficial de Vanna
+        do_graph = "--graph" in sys.argv
         try:
             sql, df, fig = vn.ask(
                 question=query,
                 print_results=False,
                 auto_train=False,
-                visualize=False,
+                visualize=do_graph,
                 allow_llm_to_see_data=True
             )
         except Exception as e:
@@ -174,6 +179,11 @@ def main() -> None:
         questions = []
         if do_questions:
             questions = vn.generate_followup_questions(question=query, sql=sql, df=df)
+        # Opcional: preguntas globales si se pasa --global-questions
+        do_global_questions = "--global-questions" in sys.argv
+        global_questions = []
+        if do_global_questions:
+            global_questions = vn.generate_questions()
         result = {
             "sql": f"```sql\n{sql}\n```",
             "dataframe": text,
@@ -182,6 +192,8 @@ def main() -> None:
         }
         if do_questions:
             result["questions"] = questions
+        if do_global_questions:
+            result["global_questions"] = global_questions
         sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
 
     except Exception as e:
