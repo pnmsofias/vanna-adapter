@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vanna-adapter"
+version = "0.1.0"
+description = "CLI adapter for vanna.ai"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name = "Auto", email="auto@example.com"}]
+license = {text="MIT"}
+
+dependencies = [
+    "vanna==0.7.9",
+    "pandas",
+    "sqlalchemy",
+    "plotly",
+    "psycopg2-binary",
+    "duckdb-engine",
+    "snowflake-connector-python",
+    "google-cloud-bigquery",
+    "mysql-connector-python",
+]
+
+[project.scripts]
+vanna-adapter = "vanna_adapter.cli:main"
+
+[tool.pytest.ini_options]
+addopts = "-vv"
+
+[tool.ruff]
+line-length = 100
