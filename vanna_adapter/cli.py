@@ -135,6 +135,32 @@ def _build_vanna(api_key: str, model: str) -> Vanna:
     return Vanna(client=client, config=config)
 
 
+def _connect_database(vn: Vanna, url) -> None:
+    """Conecta a Vanna con la base de datos indicada por el URL."""
+    backend = (url.drivername or "").split("+", 1)[0]
+    if backend in {"postgresql", "postgres"}:
+        vn.connect_to_postgres(
+            host=url.host,
+            dbname=url.database,
+            user=url.username,
+            password=url.password,
+            port=url.port,
+        )
+        return
+    if backend == "sqlite":
+        connector = getattr(vn, "connect_to_sqlite", None)
+        if connector is None:
+            _error_exit("SQLite connections are not supported by this Vanna build")
+        db_path = url.database
+        if not db_path:
+            _error_exit("SQLite URL must include a database path")
+        if db_path != ":memory:":
+            db_path = str(Path(db_path).expanduser())
+        connector(path=db_path)
+        return
+    _error_exit(f"Unsupported database dialect: {backend}")
+
+
 def _train(vn: Vanna, engine, train_flag: Path) -> None:
     """Obtiene DDL y entrena a Vanna."""
     ddl = vn.get_ddl(engine=engine)
@@ -169,15 +195,8 @@ def main() -> None:
 
         env = _load_env()
         vn = _build_vanna(env["api_key"], env["model"])
-        # Conectar Vanna a Postgres para introspección de datos
         url = make_url(env["db_url"])
-        vn.connect_to_postgres(
-            host=url.host,
-            dbname=url.database,
-            user=url.username,
-            password=url.password,
-            port=url.port
-        )
+        _connect_database(vn, url)
         engine = create_engine(env["db_url"])
         
         query = args.query.strip()
