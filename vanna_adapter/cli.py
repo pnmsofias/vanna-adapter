@@ -5,7 +5,11 @@ import sys
 from pathlib import Path
 import argparse
 import io
+import hashlib
 from contextlib import redirect_stdout
+from urllib.parse import urlparse
+from urllib.error import URLError, HTTPError
+from urllib.request import Request, urlopen
 
 import pandas as pd
 import openai
@@ -135,6 +139,158 @@ def _build_vanna(api_key: str, model: str) -> Vanna:
     return Vanna(client=client, config=config)
 
 
+def _load_cache_metadata(path: Path) -> dict | None:
+    """Lee el archivo de metadatos del caché si existe."""
+    try:
+        with path.open("r", encoding="utf-8") as meta_file:
+            return json.load(meta_file)
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError:
+        return None
+
+
+def _headers_match(metadata: dict, headers) -> bool:
+    """Compara cabeceras HTTP con los metadatos almacenados."""
+    cached_etag = metadata.get("etag")
+    remote_etag = headers.get("ETag")
+    if cached_etag and remote_etag and remote_etag == cached_etag:
+        return True
+    cached_last_modified = metadata.get("last_modified")
+    remote_last_modified = headers.get("Last-Modified")
+    if cached_last_modified and remote_last_modified and remote_last_modified == cached_last_modified:
+        return True
+    cached_size = metadata.get("size")
+    remote_size = headers.get("Content-Length")
+    if cached_size is not None and remote_size is not None:
+        try:
+            if int(remote_size) == cached_size:
+                return True
+        except ValueError:
+            pass
+    return False
+
+
+def _revalidate_cached_sqlite(url: str, metadata: dict) -> tuple[bool, object | None]:
+    """Verifica remotamente si el archivo cacheado sigue vigente.
+
+    Retorna (True, None) si podemos reutilizarlo, (False, response) si hay que descargar.
+    """
+    etag = metadata.get("etag")
+    last_modified = metadata.get("last_modified")
+    if etag or last_modified:
+        request = Request(url, method="GET")
+        if etag:
+            request.add_header("If-None-Match", etag)
+        if last_modified:
+            request.add_header("If-Modified-Since", last_modified)
+        try:
+            response = urlopen(request)
+            return False, response
+        except HTTPError as exc:
+            if exc.code == 304:
+                return True, None
+            if exc.code == 404:
+                _error_exit("Remote SQLite URL not found (404)")
+            raise
+        except URLError:
+            sys.stderr.write("Unable to validate cached SQLite (conditional GET failed). Redownloading.\n")
+            return False, None
+
+    request = Request(url, method="HEAD")
+    try:
+        with urlopen(request) as head_response:
+            headers = head_response.info()
+    except HTTPError as exc:
+        if exc.code == 404:
+            _error_exit("Remote SQLite URL not found (404)")
+        if exc.code in {405, 501}:
+            sys.stderr.write("Remote server does not support HEAD; forcing SQLite redownload.\n")
+            return False, None
+        raise
+    except URLError as exc:
+        sys.stderr.write(f"Unable to validate cached SQLite ({exc}). Redownloading.\n")
+        return False, None
+
+    if _headers_match(metadata, headers):
+        return True, None
+    return False, None
+
+
+def _maybe_materialize_sqlite(db_url: str, work_dir: Path) -> str:
+    """Descarga un SQLite remoto (http/https) y devuelve un URL sqlite:/// local."""
+    if not db_url:
+        return db_url
+    raw_url = db_url.strip()
+    lower = raw_url.lower()
+    if not lower.startswith(("http://", "https://")):
+        return raw_url
+    parsed = urlparse(raw_url)
+    filename = Path(parsed.path).name
+    if not filename:
+        _error_exit("Remote SQLite URL must include a filename")
+    if not filename.endswith((".sqlite", ".sqlite3", ".db")):
+        _error_exit("Remote SQLite URL must end with .sqlite/.sqlite3/.db")
+    target_dir = work_dir / "databases"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    slug = hashlib.sha256(raw_url.encode("utf-8")).hexdigest()[:12]
+    local_path = (target_dir / f"{slug}-{filename}").resolve()
+    metadata_path = local_path.with_suffix(local_path.suffix + ".json")
+    metadata = _load_cache_metadata(metadata_path)
+    download_response = None
+    if metadata and metadata.get("source_url") == raw_url and local_path.exists():
+        cached_size = metadata.get("size")
+        try:
+            local_size = local_path.stat().st_size
+        except OSError:
+            local_size = None
+        if cached_size is not None and local_size is not None and cached_size != local_size:
+            sys.stderr.write(f'Size mismatch for cached SQLite "{local_path}", re-downloading\n')
+        else:
+            reuse, response = _revalidate_cached_sqlite(raw_url, metadata)
+            if reuse:
+                sys.stderr.write(f'Reusing cached SQLite database at "{local_path}"\n')
+                return f"sqlite:///{local_path}"
+            if response is not None:
+                download_response = response
+    tmp_path = local_path.with_name(local_path.name + ".tmp")
+    digest = hashlib.sha256()
+    response_headers = None
+    try:
+        if download_response is None:
+            request = Request(raw_url, method="GET")
+            download_response = urlopen(request)
+        with download_response as response, tmp_path.open("wb") as output:
+            response_headers = response.info()
+            for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                if not chunk:
+                    break
+                digest.update(chunk)
+                output.write(chunk)
+    except (HTTPError, URLError, OSError) as exc:
+        tmp_path.unlink(missing_ok=True)
+        if isinstance(exc, HTTPError) and exc.code == 304:
+            sys.stderr.write(f'Reusing cached SQLite database at "{local_path}"\n')
+            return f"sqlite:///{local_path}"
+        _error_exit(f"Failed to download SQLite database from {raw_url}: {exc}")
+    tmp_path.replace(local_path)
+    sha256 = digest.hexdigest()
+    metadata = {
+        "source_url": raw_url,
+        "sha256": sha256,
+        "size": local_path.stat().st_size,
+        "filename": filename,
+    }
+    headers = response_headers or {}
+    for header_name, meta_key in (("ETag", "etag"), ("Last-Modified", "last_modified")):
+        header_value = headers.get(header_name)
+        if header_value:
+            metadata[meta_key] = header_value
+    metadata_path.write_text(json.dumps(metadata, indent=2))
+    sys.stderr.write(f'Downloaded SQLite database to "{local_path}"\n')
+    return f"sqlite:///{local_path}"
+
+
 def _connect_database(vn: Vanna, url) -> None:
     """Conecta a Vanna con la base de datos indicada por el URL."""
     backend = (url.drivername or "").split("+", 1)[0]
@@ -194,6 +350,8 @@ def main() -> None:
         train_flag = work_dir / ".trained"
 
         env = _load_env()
+        env["db_url"] = _maybe_materialize_sqlite(env["db_url"], work_dir)
+        os.environ["DB_URL"] = env["db_url"]
         vn = _build_vanna(env["api_key"], env["model"])
         url = make_url(env["db_url"])
         _connect_database(vn, url)
