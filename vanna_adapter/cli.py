@@ -7,6 +7,11 @@ import argparse
 import io
 import hashlib
 from contextlib import redirect_stdout
+import inspect
+import threading
+import atexit
+from functools import partial
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse
 from urllib.error import URLError, HTTPError
 from urllib.request import Request, urlopen
@@ -313,16 +318,51 @@ def _connect_database(vn: Vanna, url) -> None:
         if db_path != ":memory:":
             db_path = str(Path(db_path).expanduser())
         sqlite_url = db_path if db_path.startswith("sqlite") or db_path == ":memory:" else f"sqlite:///{db_path}"
+        params = inspect.signature(connector).parameters
+        kwargs = {}
+        if "path" in params:
+            kwargs["path"] = db_path
+        if "url" in params:
+            kwargs["url"] = sqlite_url
+        attempts = []
+        if kwargs:
+            attempts.append(kwargs)
+        # fallback combinations for connectors expecting specific keywords
+        attempts.append({"path": db_path})
+        attempts.append({"url": sqlite_url})
+        attempts.append({"database": db_path})
+        for call_kwargs in attempts:
+            if not call_kwargs:
+                continue
+            try:
+                connector(**call_kwargs)
+                return
+            except TypeError:
+                continue
+            except Exception as exc:
+                message = str(exc)
+                if (
+                    "No connection adapters were found" in message
+                    and "url" in call_kwargs
+                    and db_path != ":memory:"
+                ):
+                    http_url = _serve_sqlite_over_http(db_path)
+                    retry_kwargs = dict(call_kwargs)
+                    retry_kwargs["url"] = http_url
+                    connector(**retry_kwargs)
+                    return
+                raise
+        # Positional fallback
         try:
-            connector(path=db_path)
+            connector(db_path)
             return
         except TypeError:
             pass
         try:
-            connector(url=sqlite_url)
+            connector(sqlite_url)
             return
         except TypeError as exc:
-            _error_exit(f"SQLite connector does not accept 'path' or 'url' kwargs: {exc}")
+            _error_exit(f"Unable to connect to SQLite database with available connector signatures: {exc}")
     _error_exit(f"Unsupported database dialect: {backend}")
 
 
@@ -437,3 +477,26 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+_SQLITE_HTTP_SERVERS: dict[Path, tuple[ThreadingHTTPServer, str]] = {}
+
+
+def _serve_sqlite_over_http(db_path: str) -> str:
+    """Expone el archivo SQLite vía HTTP local para conectores que solo aceptan URLs http(s)."""
+    path = Path(db_path).resolve()
+    existing = _SQLITE_HTTP_SERVERS.get(path)
+    if existing:
+        return existing[1]
+    handler = partial(SimpleHTTPRequestHandler, directory=str(path.parent))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_port}/{path.name}"
+    _SQLITE_HTTP_SERVERS[path] = (server, url)
+
+    def _shutdown_server(server=server, tracked_path=path):
+        server.shutdown()
+        server.server_close()
+        _SQLITE_HTTP_SERVERS.pop(tracked_path, None)
+
+    atexit.register(_shutdown_server)
+    return url
