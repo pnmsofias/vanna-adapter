@@ -312,8 +312,17 @@ def _connect_database(vn: Vanna, url) -> None:
             _error_exit("SQLite URL must include a database path")
         if db_path != ":memory:":
             db_path = str(Path(db_path).expanduser())
-        connector(path=db_path)
-        return
+        sqlite_url = db_path if db_path.startswith("sqlite") or db_path == ":memory:" else f"sqlite:///{db_path}"
+        try:
+            connector(path=db_path)
+            return
+        except TypeError:
+            pass
+        try:
+            connector(url=sqlite_url)
+            return
+        except TypeError as exc:
+            _error_exit(f"SQLite connector does not accept 'path' or 'url' kwargs: {exc}")
     _error_exit(f"Unsupported database dialect: {backend}")
 
 
